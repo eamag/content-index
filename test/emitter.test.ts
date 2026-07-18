@@ -10,6 +10,7 @@ import type {
   ProcessedContent,
   QuartzConfig,
   StaticResources,
+  FullSlug,
 } from "@quartz-community/types";
 
 function createCtx(outputDir: string): BuildCtx {
@@ -186,5 +187,45 @@ describe("ContentIndex emitter", () => {
     );
     expect(index["encrypted-visible"]).toBeDefined();
     expect(index["encrypted-visible"]!.title).toBe("Locked");
+  });
+
+  it("filters out virtual pages without relativePath by default", async () => {
+    const emitter = ContentIndex();
+    const virtualPage = createPage({ slug: "tags/test", title: "Test Tag" });
+    delete virtualPage[1].data.relativePath;
+    const content: ProcessedContent[] = [
+      createPage({ slug: "public", title: "Public Page", text: "hi" }),
+      virtualPage,
+    ];
+    const ctx = createCtx(outputDir);
+    ctx.allSlugs = ["public" as FullSlug];
+    await emitter.emit(ctx, content, createResources());
+
+    const index = await readJson<Record<string, unknown>>(
+      path.join(outputDir, "static", "contentIndex.json"),
+    );
+    expect(index["public"]).toBeDefined();
+    expect(index["tags/test"]).toBeUndefined();
+
+    const rss = await fs.readFile(path.join(outputDir, "index.xml"), "utf8");
+    expect(rss).toContain("Public Page");
+    expect(rss).not.toContain("Test Tag");
+  });
+
+  it("allows custom filter function to customize which pages are indexed", async () => {
+    const emitter = ContentIndex({
+      filter: (v) => v[1].data.slug === "keep-me",
+    });
+    const content: ProcessedContent[] = [
+      createPage({ slug: "keep-me", title: "Keep Me", text: "hi" }),
+      createPage({ slug: "filter-me", title: "Filter Me", text: "bye" }),
+    ];
+    await emitter.emit(createCtx(outputDir), content, createResources());
+
+    const index = await readJson<Record<string, unknown>>(
+      path.join(outputDir, "static", "contentIndex.json"),
+    );
+    expect(index["keep-me"]).toBeDefined();
+    expect(index["filter-me"]).toBeUndefined();
   });
 });

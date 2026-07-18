@@ -38,6 +38,7 @@ interface Options {
   includeEmptyFiles: boolean;
   rssRecentNotesText?: string;
   rssLastFewNotesText?: (count: number) => string;
+  filter: (v: ProcessedContent, ctx: BuildCtx) => boolean;
 }
 
 const defaultOptions: Options = {
@@ -49,6 +50,9 @@ const defaultOptions: Options = {
   includeEmptyFiles: true,
   rssRecentNotesText: "Recent notes",
   rssLastFewNotesText: (count) => `Last ${count} notes`,
+  filter: (v, ctx) =>
+    ctx.allSlugs.length === 0 ||
+    (v[1].data.slug !== undefined && ctx.allSlugs.includes(v[1].data.slug as FullSlug)),
 };
 
 const write = async (args: {
@@ -136,6 +140,7 @@ export const ContentIndex: QuartzEmitterPlugin<Partial<Options>> = (opts) => {
     for (const [tree, file] of content) {
       const data = (file.data as Record<string, unknown>) ?? {};
       if (data.unlisted === true) continue;
+      if (!options.filter([tree, file], ctx)) continue;
       const slug = data.slug as FullSlug;
       const date = getDate(data as QuartzPluginData) ?? new Date();
       const text = data.text as string | undefined;
