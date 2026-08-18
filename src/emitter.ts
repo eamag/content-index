@@ -39,6 +39,7 @@ interface Options {
   rssRecentNotesText?: string;
   rssLastFewNotesText?: (count: number) => string;
   filter: (v: ProcessedContent, ctx: BuildCtx) => boolean;
+  rssFilter: (v: ProcessedContent, ctx: BuildCtx) => boolean;
 }
 
 const defaultOptions: Options = {
@@ -50,9 +51,21 @@ const defaultOptions: Options = {
   includeEmptyFiles: true,
   rssRecentNotesText: "Recent notes",
   rssLastFewNotesText: (count) => `Last ${count} notes`,
-  filter: (v, ctx) =>
-    ctx.allSlugs.length === 0 ||
-    (v[1].data.slug !== undefined && ctx.allSlugs.includes(v[1].data.slug as FullSlug)),
+  filter: (v) => {
+    const data = (v[1].data as Record<string, unknown>) ?? {};
+    const slug = data.slug;
+    const relativePath = data.relativePath;
+    return (
+      typeof relativePath === "string" &&
+      relativePath.length > 0 &&
+      typeof slug === "string" &&
+      slug.length > 0
+    );
+  },
+  rssFilter: (v, ctx) => {
+    const slug = (v[1].data as Record<string, unknown>).slug;
+    return ctx.allSlugs.length === 0 || ctx.allSlugs.includes(slug as FullSlug);
+  },
 };
 
 const write = async (args: {
@@ -133,10 +146,16 @@ function generateRSSFeed(
 }
 
 export const ContentIndex: QuartzEmitterPlugin<Partial<Options>> = (opts) => {
-  const options = { ...defaultOptions, ...opts };
+  const options: Options = {
+    ...defaultOptions,
+    ...opts,
+    filter: opts?.filter ?? defaultOptions.filter,
+    rssFilter: opts?.rssFilter ?? defaultOptions.rssFilter,
+  };
   const emitAll = async (ctx: BuildCtx, content: ProcessedContent[]): Promise<FilePath[]> => {
     const cfg = ctx.cfg.configuration;
     const linkIndex: ContentIndexMap = new Map();
+    const rssSlugs = new Set<FullSlug>();
     for (const [tree, file] of content) {
       const data = (file.data as Record<string, unknown>) ?? {};
       if (data.unlisted === true) continue;
@@ -161,6 +180,7 @@ export const ContentIndex: QuartzEmitterPlugin<Partial<Options>> = (opts) => {
           date: date,
           description: (data.description as string | undefined) ?? "",
         });
+        if (options.rssFilter([tree, file], ctx)) rssSlugs.add(slug);
       }
     }
 
@@ -177,10 +197,13 @@ export const ContentIndex: QuartzEmitterPlugin<Partial<Options>> = (opts) => {
     }
 
     if (options.enableRSS) {
+      const rssIndex: ContentIndexMap = new Map(
+        Array.from(linkIndex).filter(([slug]) => rssSlugs.has(slug)),
+      );
       outputs.push(
         await write({
           ctx,
-          content: generateRSSFeed(cfg, linkIndex, options, options.rssLimit),
+          content: generateRSSFeed(cfg, rssIndex, options, options.rssLimit),
           slug: (options.rssSlug ?? "index") as FullSlug,
           ext: ".xml",
         }),
